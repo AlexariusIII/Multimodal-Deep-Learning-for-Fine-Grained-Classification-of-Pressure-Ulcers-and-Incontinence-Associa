@@ -12,9 +12,11 @@ from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 import wandb
 import numpy as np
-from inference import LightningInferenceClassification,Kiadeku_Inference
+from inference import Kiadeku_Inference
+
 
 def main():
+    torch.set_float32_matmul_precision('high')
     #load config and args
     parser = ArgumentParser(formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument("-c", "--config", default='config', help="Select config")
@@ -109,18 +111,21 @@ def main():
 
         num_classes = dm.get_class_num()
         print(f"Setting up model with architecture: {args['architecture']} and {num_classes} Classes")
-        model = MultiModal_Concat_Timm(arch=img_encoders[args['architecture']], num_cat_feature=5,num_output_classes=num_classes,multi_modal=multimodality,device=device)
+        model = MultiModal_Concat_Timm(arch=img_encoders[args['architecture']], num_cat_feature=5,num_output_classes=num_classes,multi_modal=multimodality,device=device) # type: ignore
         #Load lightning module
         module = Image_Classification_Module(model,lr, num_classes)
         if mode == 'multilabel':
                 module = Image_Classification_Module_MultiLabel(model,lr, num_classes)
         
         #Initiate logger
+        #test_dim = '512'
+        #group_name = f"{args['architecture']}-T: {args['transforms']}-M:{multimodality}-Cr:{cropping}-O:{oversample}-test_dim{test_dim}"
         group_name = f"{args['architecture']}-T: {args['transforms']}-M:{multimodality}-Cr:{cropping}-O:{oversample}"
         file_name =  f"{model.get_name()}-Fold: {fold}"
         wandb_logger = WandbLogger(entity='alexander-brehmer', project=f"Kiadeku-{args['dataset']}", group=group_name, name=file_name)
         
         #Train
+        #ckpt_path=os.path.join('checkpoints',f"{args['dataset']}/{args['architecture']}/t_{args['transforms']}_m_{multimodality}_cr_{cropping}_o_{oversample}-test_dim{test_dim}/fold_{fold}")
         ckpt_path=os.path.join('checkpoints',f"{args['dataset']}/{args['architecture']}/t_{args['transforms']}_m_{multimodality}_cr_{cropping}_o_{oversample}/fold_{fold}")
         early_stop_callback = EarlyStopping(monitor="val_f1", min_delta=0.00, patience=15, verbose=True, mode="max")
         checkpoint_callback = ModelCheckpoint(
@@ -133,23 +138,34 @@ def main():
         auto_insert_metric_name=True,
         verbose=True ,
         )
+        #print(device)
+        #print(find_usable_cuda_devices(2))
+        #print(torch.cuda.get_device_name())
+        # print(torch.cuda.current_device())
+        # print(torch.cuda.device_count())
         trainer = L.Trainer(
                 check_val_every_n_epoch=1,
+                #enable_checkpointing=False,
                 max_epochs=epochs,
                 accelerator=device,
+                #devices=gpu,
                 devices=-1,
                 logger=wandb_logger,
                 deterministic=True,
-                callbacks=[early_stop_callback,checkpoint_callback]
+                callbacks=[early_stop_callback,checkpoint_callback],
                 )
         trainer.fit(model=module, datamodule=dm)
         test_res = trainer.test(datamodule=dm,ckpt_path=os.path.join(ckpt_path,f"{model.get_name()}.ckpt"),verbose=True)
+        #test_res = trainer.test(datamodule=dm,ckpt_path='best',verbose=True)
         wandb.finish()
         print(test_res)
         test_f1_scores.append(test_res[0]['test_f1'])
         test_auroc_scores.append(test_res[0]['test_auroc'])
         test_prAuc_scores.append(test_res[0]['test_prAuc'])
  
+    print(f"F1:Scores: {test_f1_scores}")
+    print(f"AUROC:Scores: {test_auroc_scores}")
+    print(f"PR_Auc:Scores: {test_prAuc_scores}")
     average_f1 = np.mean(test_f1_scores)
     average_auroc = np.mean(test_auroc_scores)
     average_prAuc = np.mean(test_prAuc_scores)

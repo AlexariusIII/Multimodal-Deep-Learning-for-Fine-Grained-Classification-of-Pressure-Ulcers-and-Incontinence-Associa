@@ -1,7 +1,7 @@
 Training:
   lr: 0.0001
   epochs: 50
-  batch_size: 64
+  batch_size: 32
   worker_count: 8
 
 Augs:
